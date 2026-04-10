@@ -6,21 +6,28 @@
 
 ## Status
 
-**Current phase:** Phase 1 ACP bridge is implemented and smoke-tested.
+**Current phase:** Phase 1 ACP bridge skeleton is implemented and smoke-tested.
 
 **Current runtime path:**
 
 ```text
 pi
-  -> claude-agent-sdk-pi   (this extension; thin ACP client)
+  -> claude-agent-sdk-pi   (this repository; thin ACP client)
     -> claude-agent-acp    (canonical ACP server for Claude Code)
       -> Claude Code
+        -> native Claude configuration
+        -> native MCP configuration
+        -> ~/.claude/CLAUDE.md / ~/.claude/skills
+        -> CLI / PATH tools
 ```
 
 **Compatibility note:**
 - Package/repo name is still `claude-agent-sdk-pi`
 - Provider ID is still `claude-agent-sdk`
 - A rename may happen later, after the ACP path is stable
+
+**Current caveat:**
+The architecture has been reframed around Claude-side capability loading, but the bridge still lacks a complete configuration surface for append vs non-append operation, setting source selection, and safe tool/status rendering.
 
 ---
 
@@ -76,7 +83,26 @@ That means this repository is no longer trying to be a custom re-implementation 
 
 Instead, it is now a **thin ACP client extension for pi**.
 
-This shift is the core design decision of the project.
+### 2026-04-10 — Reframing after reviewing agent-shell and the non-append model
+
+A second design review corrected an important assumption: Pi-native tool execution is **not** the only valid way to preserve a multi-harness workflow.
+
+If Claude Code already knows how to load:
+
+- `~/.claude/CLAUDE.md`
+- `~/.claude/skills`
+- native MCP servers
+- shell / PATH-based tools
+
+then the correct bridge is often the *thinner* bridge, not the more intrusive one.
+
+That means the preferred long-term model is now:
+
+- **pi** owns harness UX and orchestration
+- **Claude Code** owns capability loading and execution through its native paths
+- **this repository** owns transport, visibility, and synchronization
+
+This was the key architectural clarification.
 
 ---
 
@@ -120,9 +146,10 @@ This extension should be a **thin transport and event-mapping layer**, not a sec
 - spawns `claude-agent-acp`
 - initializes the ACP connection
 - creates/reuses ACP sessions
-- forwards the current user prompt
+- forwards prompts into ACP
 - maps ACP session updates into pi stream events
 - handles cancellation and process lifecycle
+- should make Claude-side tool execution visible in the pi UI
 
 #### `claude-agent-acp`
 - provides the canonical ACP server for Claude Code
@@ -130,16 +157,55 @@ This extension should be a **thin transport and event-mapping layer**, not a sec
 
 #### Claude Code
 - remains the actual Claude-side engine
-- keeps its own native behavior through the ACP server path
+- may load its own capabilities through native configuration
+- may execute tools through native MCP, shell, and Claude-side skill paths
 
-### What this explicitly avoids
+---
 
-This repository should **not** reintroduce:
+## Capability Loading Model
 
-- prompt reconstruction from full pi history
-- a second session ledger for “recovered” tool state
-- custom tool-call semantics that fight the ACP/Claude path
-- ad-hoc provider-side emulation of Claude Code internals
+The current architectural understanding is:
+
+1. Pi does **not** have to execute every useful tool itself.
+2. Claude Code can bring its own capabilities to the session.
+3. A thin ACP bridge is valid **if it preserves observability and synchronization**.
+
+### Preferred long-term operating model
+
+```text
+pi = harness / UX / orchestration
+bridge = transport / visibility / session discipline
+Claude Code = engine / native skills / MCP / execution
+```
+
+### Relationship to session-bridge
+
+This repository is about the **vertical** connection between pi and Claude Code through ACP.
+A separate **horizontal** coordination path may exist elsewhere in the ecosystem (for example a session-bridge living in `agent-config`) to let one harness/session steer or notify another.
+
+Those two layers are complementary, not competing:
+
+- this repository: `pi -> ACP bridge -> Claude Code`
+- session-bridge: session-to-session / harness-to-harness coordination
+
+### Non-append direction
+
+The preferred direction is increasingly **non-append**:
+
+- let Claude Code load its own context from `~/.claude`
+- avoid duplicating the same instructions in every bridged prompt
+- only inject prompt material from pi when truly necessary
+
+### Important nuance
+
+A thin bridge is **not** the same thing as a blind bridge.
+
+Even if Claude executes tools natively, pi still needs to:
+
+- show tool activity
+- show status / usage progression
+- detect history/state divergence
+- clean up spawned processes correctly
 
 ---
 
@@ -172,32 +238,49 @@ Implemented now:
 
 ---
 
-## What Is Not Done Yet
+## What Is Still Missing
 
 The following items are intentionally **not** claimed as complete:
 
 - rich pi-side rendering of `tool_call` / `tool_call_update`
+- robust handling of history edits / forks / replay invalidation
 - ACP `loadSession` / resume / replay support
-- a deliberate long-term strategy for pi-native tool routing
-- full settings/config surface for the new ACP bridge
+- process-group cleanup for deep Claude-side subprocess trees
+- a complete configuration surface for:
+  - append vs non-append
+  - `settingSources`
+  - `strictMcpConfig`
+  - explicit vs automatic MCP strategy
 - package/repository/provider renaming after stabilization
-- full documentation refresh across every historical note in the repo
+
+### Why these are important
+
+These are not just polish items.
+They affect correctness and operability:
+
+- without tool rendering, pi becomes blind while Claude works
+- without history invalidation, pi and Claude can drift into different realities
+- without robust shutdown, Claude-side shells can outlive the bridge
 
 ---
 
-## Tool Strategy (Current Reality)
+## Design Boundaries
 
-At the moment, this repository is focused on making the **ACP path itself** correct and minimal.
+This repository should **not** reintroduce:
 
-That means the current implementation is **not** trying to recreate the previous “pi executes all Claude-requested tools through a custom direct bridge” model.
+- prompt reconstruction from full pi history as a default mechanism
+- a second session ledger for “recovered” tool state
+- custom tool-call semantics that fight the ACP/Claude path
+- ad-hoc provider-side emulation of Claude Code internals
+- large-scale argument/tool translation layers unless proven necessary
 
-The architectural priority is:
+This repository **should** own:
 
-1. make the ACP path reliable
-2. keep the extension small
-3. only revisit tool-routing decisions after the transport/session layer is stable
-
-If a future phase reintroduces pi-native tool execution, it should be treated as a deliberate design project — not as a quick compatibility patch.
+- transport
+- session lifecycle discipline
+- event visibility
+- error reporting
+- bridge-specific safety and cleanup
 
 ---
 
@@ -266,7 +349,7 @@ Supported values today:
 - `approve-reads`
 - `deny-all`
 
-This is intentionally minimal for Phase 1.
+**Warning:** the current Phase 1 implementation still needs stronger UI visibility around tool execution. Do not mistake the current default behavior for the final safe operating mode.
 
 ---
 
@@ -274,22 +357,23 @@ This is intentionally minimal for Phase 1.
 
 ### Near-term
 
-- improve pi-side rendering for tool updates
-- add ACP session load/reuse beyond the current live-process model
-- tighten error reporting and diagnostics
-- document the new architecture more rigorously
+- render `tool_call` / `tool_call_update` in pi
+- detect history mutation and invalidate ACP sessions correctly
+- fix subprocess tree shutdown
+- expose append/non-append and Claude config loading controls
 
 ### Mid-term
 
-- decide whether pi-native tool routing is worth reintroducing
-- add a clearer configuration surface for bridge behavior
+- decide how much explicit MCP configuration the bridge should expose
+- support load/resume/replay more deliberately
 - rename the repository/provider once the architecture settles
 
 ### Long-term
 
 - keep the bridge boring
 - minimize custom semantics
-- rely on ACP as the stable boundary instead of growing another bespoke layer
+- rely on ACP as the stable boundary
+- let Claude Code load and use its own capabilities where possible
 
 ---
 
@@ -298,4 +382,4 @@ This is intentionally minimal for Phase 1.
 If a proposed change makes this repository more magical, more stateful, or more “special,” it is probably moving in the wrong direction.
 
 The goal is not to be clever.
-The goal is to be thin, standard, and reliable.
+The goal is to be thin, observable, and reliable.
