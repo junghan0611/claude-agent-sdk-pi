@@ -144,7 +144,19 @@ function loadProviderSettings(cwd: string): ResolvedProviderSettings {
 }
 
 function extractPromptBlocks(context: Context): Array<{ type: "text"; text: string } | { type: "image"; data?: string; mimeType?: string; uri?: string }> {
-	const latestUserMessage = [...context.messages].reverse().find((message) => message.role === "user") as any;
+	// Find the first user message after the last assistant message.
+	// pi injects hook messages (e.g., SessionStart "device=..., time_kst=...") as additional
+	// user messages AFTER the real prompt. Using reverse().find() would pick the hook message
+	// instead of the actual prompt. By taking the first user message in the trailing group,
+	// we reliably get the real prompt in both single-turn (-p) and multi-turn modes.
+	let lastAssistantIdx = -1;
+	for (let i = context.messages.length - 1; i >= 0; i--) {
+		if (context.messages[i].role === "assistant") {
+			lastAssistantIdx = i;
+			break;
+		}
+	}
+	const latestUserMessage = context.messages.slice(lastAssistantIdx + 1).find((message) => message.role === "user") as any;
 	if (!latestUserMessage) {
 		return [{ type: "text", text: "" }];
 	}
