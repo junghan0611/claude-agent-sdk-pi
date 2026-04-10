@@ -1,14 +1,16 @@
 # claude-agent-sdk-pi
 
-> Transitional repository name. The package name and provider ID are kept for compatibility, but the runtime architecture has pivoted from a direct Claude Agent SDK bridge to an ACP-first bridge.
+> **⚠️ ARCHIVED** — This repository is archived as of 2026-04-10.
+> The experiment concluded successfully, but the **ben approach** (direct Anthropic API via [pi-claude-code-use](https://github.com/nicobailey/pi-packages)) proved simpler and more maintainable than the ACP bridge approach.
+> See [Conclusion](#conclusion) for the full rationale.
 
 ![Demo](screenshot.png)
 
 ## Status
 
-**Current phase:** Phase 2 baseline is implemented, smoke-tested, and benchmarked.
+**Phase:** Archived. Experiment complete.
 
-**Current runtime path:**
+**What was built:**
 
 ```text
 pi
@@ -21,18 +23,25 @@ pi
         -> CLI / PATH tools
 ```
 
-**Compatibility note:**
-- Package/repo name is still `claude-agent-sdk-pi`
-- Provider ID is still `claude-agent-sdk`
-- The naming is now legacy baggage from the direct-SDK era
-- A cleaner repository/package split or rename will likely happen later, once the ACP path and operating model fully settle
+**What replaced it:**
 
-**Current caveat:**
-The architecture has been reframed around Claude-side capability loading, and the bridge now exposes a basic configuration surface for append vs non-append operation, setting source selection, and strict MCP mode. Core prompt routing, tool visibility, session invalidation, and benchmarked harness behavior are working. However, long-session replay/reconnect, richer tool rendering, and deeper day-to-day validation are still incomplete.
+```text
+pi
+  -> anthropic provider (direct API, built into pi)
+    -> pi-claude-code-use (ben's package; patches Claude Code capabilities)
+    -> Claude API
+```
 
-## Benchmark Snapshot
+The ben approach won because:
+- No intermediate process (ACP subprocess) to manage
+- No session state synchronization between two runtimes
+- pi already owns tool execution — delegating back to Claude Code was redundant
+- Simpler debugging, faster response, fewer failure modes
 
-Benchmark status as of **2026-04-10**: the ACP bridge is no longer just "working in principle" — it is competitive with, and often faster than, a direct provider route in the same harness.
+## Benchmark Snapshot (Final)
+
+Benchmark as of **2026-04-10** — the ACP bridge reached competitive parity with direct API routes.
+This validated the architecture but also showed that the extra complexity wasn't buying enough.
 
 Comparison used:
 
@@ -53,18 +62,14 @@ Comparison used:
 | code-read | 15.6s | 18.4s | 1.2x | direct slightly faster |
 | git-status | 9.1s | 6.4s | 0.7x | bridge faster |
 
-What this means:
-
-- the bridge now answers correctly across basic prompts, reasoning, Korean generation, tool use, and harness-aware queries
-- system prompt / AGENTS.md loading works in real project context
-- tool use through the ACP path is not merely functional; it is often faster than the direct comparison route
-- the remaining gaps are now mostly about UX polish and lifecycle depth, not basic correctness
+The bridge worked — tool use, reasoning, Korean generation, system prompt adherence all passed.
+But "it works" wasn't enough to justify the architectural overhead vs the simpler ben path.
 
 ---
 
 ## History
 
-### 2026-04-09 — The direct bridge started to collapse under bespoke glue
+### 2026-04-09 - The direct bridge started to collapse under bespoke glue
 
 This repository began as a fork of the original `claude-agent-sdk-pi` approach: use the Claude Agent SDK directly inside a pi provider, block tool execution inside Claude Code, and let pi execute tools itself.
 
@@ -79,7 +84,7 @@ That approach looked attractive because it appeared to preserve pi-native contro
 - custom MCP exposure for pi tools
 - provider-side compensation for SDK behavior changes
 
-The result was not “Claude is weak.” The result was that the bridge itself became a parallel state machine.
+The result was not "Claude is weak." The result was that the bridge itself became a parallel state machine.
 
 That showed up as concrete failures:
 
@@ -88,11 +93,11 @@ That showed up as concrete failures:
 - context contamination from recovered tool results
 - unstable behavior whenever upstream SDK semantics shifted
 
-### 2026-04-09 — Stabilization pass on the old architecture
+### 2026-04-09 - Stabilization pass on the old architecture
 
 Before changing architecture, this fork applied a short stabilization pass to confirm the immediate failure modes:
 
-- fixed the `edit` argument mapping to pi’s `edits[]` shape
+- fixed the `edit` argument mapping to pi's `edits[]` shape
 - disabled the ToolWatch ledger that re-injected stale tool results
 - added a module re-registration guard to prevent provider overwrite on reload/subagent import
 - disabled SDK session persistence because pi already owns session history
@@ -101,7 +106,7 @@ Those fixes improved local behavior, but they also made the deeper conclusion ob
 
 > The long-term problem was not a missing patch. The problem was the amount of bespoke protocol translation sitting between pi and Claude Code.
 
-### 2026-04-10 — Architectural pivot to ACP
+### 2026-04-10 - Architectural pivot to ACP
 
 The project then pivoted to a new approach:
 
@@ -114,7 +119,7 @@ That means this repository is no longer trying to be a custom re-implementation 
 
 Instead, it is now a **thin ACP client extension for pi**.
 
-### 2026-04-10 — Reframing after reviewing agent-shell and the non-append model
+### 2026-04-10 - Reframing after reviewing agent-shell and the non-append model
 
 A second design review corrected an important assumption: Pi-native tool execution is **not** the only valid way to preserve a multi-harness workflow.
 
@@ -135,9 +140,9 @@ That means the preferred long-term model is now:
 
 This was the key architectural clarification.
 
-### 2026-04-10 — From skeleton to usable baseline
+### 2026-04-10 - From skeleton to usable baseline
 
-The bridge then crossed an important threshold from “architectural skeleton” to “usable baseline”:
+The bridge then crossed an important threshold from "architectural skeleton" to "usable baseline":
 
 - added visible rendering of Claude-side tool activity in pi
 - added history/signature-based ACP session invalidation
@@ -146,7 +151,7 @@ The bridge then crossed an important threshold from “architectural skeleton”
 - fixed prompt extraction so pi hook/user metadata messages do not replace the actual user prompt
 - validated the path with `bench.sh` against a direct Claude route
 
-The benchmark result was not just “it runs.” The ACP path produced correct answers across simple prompts, reasoning, tool use, multi-step file reading, Korean generation, and harness-aware prompts.
+The benchmark result was not just "it runs." The ACP path produced correct answers across simple prompts, reasoning, tool use, multi-step file reading, Korean generation, and harness-aware prompts.
 
 ---
 
@@ -260,7 +265,7 @@ Even if Claude executes tools natively, pi still needs to:
 Implemented now:
 
 - provider registration in pi
-- model listing via pi’s Anthropic model catalog
+- model listing via pi's Anthropic model catalog
 - subprocess spawn of `claude-agent-acp`
 - ACP `initialize`
 - ACP `newSession`
@@ -286,11 +291,11 @@ Implemented now:
 
 ### Current module layout
 
-- `index.ts` — pi provider registration and top-level stream entry
-- `acp-bridge.ts` — subprocess lifecycle, ACP connection, session management
-- `event-mapper.ts` — ACP session updates -> pi stream events
-- `run.sh` — install/auth/smoke workflow
-- `bench.sh` — direct-vs-ACP benchmark runner
+- `index.ts` - pi provider registration and top-level stream entry
+- `acp-bridge.ts` - subprocess lifecycle, ACP connection, session management
+- `event-mapper.ts` - ACP session updates -> pi stream events
+- `run.sh` - install/auth/smoke workflow
+- `bench.sh` - direct-vs-ACP benchmark runner
 
 ---
 
@@ -322,7 +327,7 @@ They affect correctness and operability:
 This repository should **not** reintroduce:
 
 - prompt reconstruction from full pi history as a default mechanism
-- a second session ledger for “recovered” tool state
+- a second session ledger for "recovered" tool state
 - custom tool-call semantics that fight the ACP/Claude path
 - ad-hoc provider-side emulation of Claude Code internals
 - large-scale argument/tool translation layers unless proven necessary
@@ -393,7 +398,7 @@ This will:
 
 - install dependencies
 - sync pi auth alias data
-- install this local package path into the target project’s `.pi/settings.json`
+- install this local package path into the target project's `.pi/settings.json`
 - run a smoke test
 
 ---
@@ -462,34 +467,50 @@ Default behavior when no settings are present:
 
 ---
 
-## Roadmap
+## Conclusion
 
-### Near-term
+This repository explored two approaches to connecting pi with Claude Code:
 
-- validate the new settings surface under real multi-turn usage
-- improve tool rendering beyond plain text notices
-- add history replay or a clearer recovery story after invalidation
-- validate subprocess cleanup under longer-running real tools
-- continue benchmarking against direct provider routes while Claude-side tuning evolves
+### Phase 1: Direct SDK Bridge (2026-04-09)
+Used the Claude Agent SDK directly inside a pi provider. Collapsed under bespoke glue — tool mapping, argument rewriting, prompt reconstruction, session emulation.
 
-### Mid-term
+### Phase 2: ACP Bridge (2026-04-10)
+Pivoted to ACP (Agent Client Protocol). Achieved a working baseline — smoke tests, benchmarks, prompt routing, tool visibility all passed. The architecture was sound.
 
-- decide how much explicit MCP configuration the bridge should expose
-- support load/resume/replay more deliberately
-- rename the repository/provider once the architecture settles
+### Phase 3: Conclusion (2026-04-10)
+Meanwhile, **ben's approach** (`pi-claude-code-use`) proved that a much simpler path existed:
+- pi calls Claude API directly (built-in `anthropic` provider)
+- A thin package patches Claude Code capabilities into pi
+- No subprocess, no ACP, no session synchronization
+- Already working in `agent-config` as the default Claude path
 
-### Long-term
+The ACP bridge was a good experiment — it validated that the protocol works and the bridge can be thin. But when a simpler solution covers the same needs, simplicity wins.
 
-- keep the bridge boring
-- minimize custom semantics
-- rely on ACP as the stable boundary
-- let Claude Code load and use its own capabilities where possible
+### What Was Learned
+
+1. **Thin bridges are good, but no bridge is better.** ACP proved the concept, but eliminating the intermediate layer entirely was the real win.
+2. **pi already owns tool execution.** Delegating tools back to Claude Code through ACP was architecturally clean but practically redundant.
+3. **Benchmark parity isn't enough.** The ACP bridge matched direct API performance, but the operational complexity (subprocess lifecycle, session state sync, process cleanup) wasn't justified.
+4. **The ben approach is the right level of abstraction.** A package that patches capabilities into pi's existing provider is the minimal viable integration.
+
+### Legacy
+
+This code remains as reference for:
+- ACP client implementation patterns
+- pi provider extension architecture
+- prompt extraction from pi context
+- event mapping between ACP and pi streaming
+- benchmark methodology for provider comparison
 
 ---
 
-## Design Rule
+## Design Rule (Historical)
 
-If a proposed change makes this repository more magical, more stateful, or more “special,” it is probably moving in the wrong direction.
+The guiding principle that led to this conclusion:
 
-The goal is not to be clever.
-The goal is to be thin, observable, and reliable.
+> If a proposed change makes this repository more magical, more stateful, or more "special," it is probably moving in the wrong direction.
+>
+> The goal is not to be clever.
+> The goal is to be thin, observable, and reliable.
+>
+> And sometimes the thinnest bridge is no bridge at all.
