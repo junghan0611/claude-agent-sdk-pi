@@ -173,11 +173,13 @@ const session = await ensureBridgeSession({
   cwd: process.cwd(),
   modelId: process.env.PI_CLAUDE_AGENT_SDK_MODEL_ID || 'claude-sonnet-4-6',
   systemPromptAppend: '간단히 답하세요.',
+  contextMessageSignatures: ['smoke:user:ok만 답하세요.'],
 });
 
 let text = '';
-setActivePromptHandler(session, (notification) => {
-  const update = notification.update;
+setActivePromptHandler(session, (event) => {
+  if (event.type !== 'session_notification') return;
+  const update = event.notification.update;
   if (update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
     text += update.content.text;
   }

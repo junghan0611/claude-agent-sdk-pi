@@ -1,6 +1,6 @@
 import { calculateCost, createAssistantMessageEventStream, getModels, type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { applyAcpSessionUpdate, finalizeAcpStreamState, type AcpPiStreamState } from "./event-mapper.js";
+import { applyBridgePromptEvent, finalizeAcpStreamState, type AcpPiStreamState } from "./event-mapper.js";
 import { cancelActivePrompt, closeBridgeSession, ensureBridgeSession, getBridgeErrorDetails, sendPrompt, setActivePromptHandler } from "./acp-bridge.js";
 
 const PROVIDER_ID = "claude-agent-sdk";
@@ -43,6 +43,32 @@ function createOutputMessage(model: Model<any>): AssistantMessage {
 function resolveSessionKey(options: SimpleStreamOptions | undefined, cwd: string): string {
 	const sessionId = (options as { sessionId?: string } | undefined)?.sessionId;
 	return sessionId ? `pi:${sessionId}` : `cwd:${cwd}`;
+}
+
+function messageContentSignature(content: any): string {
+	if (typeof content === "string") return `text:${content}`;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) => {
+			if (!block || typeof block !== "object") return "";
+			switch (block.type) {
+				case "text":
+					return `text:${String(block.text ?? "")}`;
+				case "image":
+					return `image:${String(block.mimeType ?? block.source?.mimeType ?? block.source?.mediaType ?? "")}:${String(block.uri ?? block.source?.url ?? "")}`;
+				case "thinking":
+					return `thinking:${String(block.thinking ?? "")}`;
+				case "toolCall":
+					return `tool:${String(block.name ?? "")}:${JSON.stringify(block.arguments ?? {})}`;
+				default:
+					return `${String(block.type ?? "unknown")}:${JSON.stringify(block)}`;
+			}
+		})
+		.join("|");
+}
+
+function getContextMessageSignatures(context: Context): string[] {
+	return context.messages.map((message: any) => `${message.role}:${messageContentSignature(message.content)}`);
 }
 
 function extractPromptBlocks(context: Context): Array<{ type: "text"; text: string } | { type: "image"; data?: string; mimeType?: string; uri?: string }> {
@@ -140,11 +166,14 @@ function streamClaudeAcp(model: Model<any>, context: Context, options?: SimpleSt
 				cwd,
 				modelId: model.id,
 				systemPromptAppend: context.systemPrompt,
+				contextMessageSignatures: getContextMessageSignatures(context),
 			});
 
-			setActivePromptHandler(bridgeSession, async (notification) => {
-				if (notification?.sessionId !== bridgeSession?.acpSessionId) return;
-				applyAcpSessionUpdate(streamState, notification.update as any);
+			setActivePromptHandler(bridgeSession, async (event) => {
+				if (event.type === "session_notification" && event.notification?.sessionId !== bridgeSession?.acpSessionId) {
+					return;
+				}
+				applyBridgePromptEvent(streamState, event as any);
 			});
 
 			stream.push({ type: "start", partial: output });

@@ -1,11 +1,26 @@
 import type { AssistantMessage, AssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { BridgePromptEvent } from "./acp-bridge.js";
+
+type ObservedToolState = {
+	title: string;
+	status?: string;
+	notifiedRunning?: boolean;
+};
 
 export type AcpPiStreamState = {
 	stream: AssistantMessageEventStream;
 	output: AssistantMessage;
 	openTextIndex?: number;
 	openThinkingIndex?: number;
+	observedTools?: Map<string, ObservedToolState>;
 };
+
+function getObservedTools(state: AcpPiStreamState): Map<string, ObservedToolState> {
+	if (!state.observedTools) {
+		state.observedTools = new Map();
+	}
+	return state.observedTools;
+}
 
 function closeThinkingBlock(state: AcpPiStreamState): void {
 	if (state.openThinkingIndex == null) return;
@@ -53,7 +68,81 @@ function ensureThinkingBlock(state: AcpPiStreamState): number {
 	return index;
 }
 
-export function applyAcpSessionUpdate(state: AcpPiStreamState, update: any): void {
+function pushNotice(state: AcpPiStreamState, text: string): void {
+	if (!text.trim()) return;
+	closeThinkingBlock(state);
+	closeTextBlock(state);
+	const index = state.output.content.length;
+	state.output.content.push({ type: "text", text: text } as any);
+	state.stream.push({ type: "text_start", contentIndex: index, partial: state.output });
+	state.stream.push({ type: "text_delta", contentIndex: index, delta: text, partial: state.output });
+	state.stream.push({ type: "text_end", contentIndex: index, content: text, partial: state.output });
+}
+
+function firstTextContent(value: unknown): string | undefined {
+	if (!Array.isArray(value)) return undefined;
+	for (const item of value) {
+		if (item && typeof item === "object" && (item as any).type === "text") {
+			const text = String((item as any).text ?? "").trim();
+			if (text) return text;
+		}
+	}
+	return undefined;
+}
+
+function titleForTool(update: any, previousTitle?: string, toolCallId?: string): string {
+	return String(update?.title ?? previousTitle ?? update?._meta?.claudeCode?.toolName ?? toolCallId ?? "Tool");
+}
+
+function renderToolUpdate(state: AcpPiStreamState, update: any): void {
+	const toolCallId = String(update?.toolCallId ?? "");
+	if (!toolCallId) return;
+	const observedTools = getObservedTools(state);
+	const previous = observedTools.get(toolCallId);
+	const title = titleForTool(update, previous?.title, toolCallId);
+	const status = typeof update?.status === "string" ? update.status : previous?.status;
+	const next: ObservedToolState = {
+		title,
+		status,
+		notifiedRunning: previous?.notifiedRunning,
+	};
+	observedTools.set(toolCallId, next);
+
+	if (update.sessionUpdate === "tool_call") {
+		pushNotice(state, `\n[tool:start] ${title}\n`);
+		return;
+	}
+
+	if (update?._meta?.terminal_output && !previous?.notifiedRunning) {
+		next.notifiedRunning = true;
+		observedTools.set(toolCallId, next);
+		pushNotice(state, `\n[tool:running] ${title}\n`);
+	}
+
+	if (status && status !== previous?.status) {
+		const summary = firstTextContent(update?.rawOutput);
+		if (status === "completed") {
+			pushNotice(state, `\n[tool:done] ${title}${summary ? ` — ${summary.slice(0, 160)}` : ""}\n`);
+		} else if (status === "failed") {
+			pushNotice(state, `\n[tool:failed] ${title}${summary ? ` — ${summary.slice(0, 160)}` : ""}\n`);
+		} else if (status === "cancelled") {
+			pushNotice(state, `\n[tool:cancelled] ${title}\n`);
+		}
+	}
+}
+
+function renderPermissionEvent(state: AcpPiStreamState, event: Extract<BridgePromptEvent, { type: "permission_request" }>): void {
+	const title = String((event.request as any)?.toolCall?.title ?? "Tool");
+	const outcome = (event.response as any)?.outcome;
+	let decision = "cancelled";
+	if (outcome?.outcome === "selected") {
+		const optionId = String(outcome.optionId ?? "");
+		decision = optionId.includes("allow") ? "approved" : optionId.includes("reject") ? "rejected" : "selected";
+	}
+	pushNotice(state, `\n[permission:${decision}] ${title}\n`);
+}
+
+function applyAcpSessionUpdate(state: AcpPiStreamState, update: any): void {
 	if (!update || typeof update !== "object") return;
 
 	switch (update.sessionUpdate) {
@@ -87,6 +176,11 @@ export function applyAcpSessionUpdate(state: AcpPiStreamState, update: any): voi
 			});
 			break;
 		}
+		case "tool_call":
+		case "tool_call_update": {
+			renderToolUpdate(state, update);
+			break;
+		}
 		case "usage_update": {
 			if (typeof update.used === "number") {
 				state.output.usage.totalTokens = update.used;
@@ -98,6 +192,16 @@ export function applyAcpSessionUpdate(state: AcpPiStreamState, update: any): voi
 		}
 		default:
 			break;
+	}
+}
+
+export function applyBridgePromptEvent(state: AcpPiStreamState, event: BridgePromptEvent): void {
+	if (event.type === "session_notification") {
+		applyAcpSessionUpdate(state, event.notification.update as any);
+		return;
+	}
+	if (event.type === "permission_request") {
+		renderPermissionEvent(state, event);
 	}
 }
 

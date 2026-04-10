@@ -18,7 +18,15 @@ type PromptContentBlock =
 	| { type: "text"; text: string }
 	| { type: "image"; data?: string; mimeType?: string; uri?: string };
 
-type PendingPromptHandler = (notification: SessionNotification) => Promise<void> | void;
+export type BridgePromptEvent =
+	| { type: "session_notification"; notification: SessionNotification }
+	| {
+		type: "permission_request";
+		request: RequestPermissionRequest;
+		response: RequestPermissionResponse;
+	  };
+
+type PendingPromptHandler = (event: BridgePromptEvent) => Promise<void> | void;
 
 export type AcpBridgeSession = {
 	key: string;
@@ -29,6 +37,7 @@ export type AcpBridgeSession = {
 	acpSessionId: string;
 	modelId?: string;
 	systemPromptAppend?: string;
+	contextMessageSignatures: string[];
 	stderrTail: string[];
 	closed: boolean;
 	activePromptHandler?: PendingPromptHandler;
@@ -39,6 +48,7 @@ export type EnsureBridgeSessionParams = {
 	cwd: string;
 	modelId?: string;
 	systemPromptAppend?: string;
+	contextMessageSignatures: string[];
 };
 
 const bridgeSessions = new Map<string, AcpBridgeSession>();
@@ -216,12 +226,46 @@ function resolveClaudeAcpLaunch(): { command: string; args: string[]; source: st
 	};
 }
 
+function hasPrefix<T>(prefix: T[], value: T[]): boolean {
+	if (prefix.length > value.length) return false;
+	for (let i = 0; i < prefix.length; i++) {
+		if (prefix[i] !== value[i]) return false;
+	}
+	return true;
+}
+
+function killProcessTree(child: ChildProcessByStdio<any, any, any>): void {
+	const pid = child.pid;
+	if (!pid) return;
+	if (process.platform !== "win32") {
+		try {
+			process.kill(-pid, "SIGTERM");
+			setTimeout(() => {
+				try {
+					process.kill(-pid, "SIGKILL");
+				} catch {
+					// ignore
+				}
+			}, 1500).unref();
+			return;
+		} catch {
+			// fall through to direct kill
+		}
+	}
+	try {
+		child.kill("SIGTERM");
+	} catch {
+		// ignore
+	}
+}
+
 async function startBridgeSession(params: EnsureBridgeSessionParams): Promise<AcpBridgeSession> {
 	const launch = resolveClaudeAcpLaunch();
 	const child = spawn(launch.command, launch.args, {
 		cwd: params.cwd,
 		env: process.env,
 		stdio: ["pipe", "pipe", "pipe"],
+		detached: process.platform !== "win32",
 	});
 
 	const stderrTail: string[] = [];
@@ -235,10 +279,19 @@ async function startBridgeSession(params: EnsureBridgeSessionParams): Promise<Ac
 	const connection = new ClientSideConnection(
 		() => ({
 			sessionUpdate: async (notification: SessionNotification) => {
-				await session.activePromptHandler?.(notification);
+				await session.activePromptHandler?.({
+					type: "session_notification",
+					notification,
+				});
 			},
 			requestPermission: async (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-				return resolvePermissionResponse(request);
+				const response = resolvePermissionResponse(request);
+				await session.activePromptHandler?.({
+					type: "permission_request",
+					request,
+					response,
+				});
+				return response;
 			},
 			readTextFile: async (request: any): Promise<any> => {
 				const content = readFileSync(request.path, "utf8");
@@ -260,6 +313,7 @@ async function startBridgeSession(params: EnsureBridgeSessionParams): Promise<Ac
 		acpSessionId: "",
 		modelId: params.modelId,
 		systemPromptAppend: normalizeText(params.systemPromptAppend),
+		contextMessageSignatures: [...params.contextMessageSignatures],
 		stderrTail,
 		closed: false,
 	};
@@ -320,15 +374,26 @@ export async function ensureBridgeSession(params: EnsureBridgeSessionParams): Pr
 		!existing.closed &&
 		isChildAlive(existing.child) &&
 		existing.cwd === params.cwd &&
-		existing.systemPromptAppend === normalizedSystemPrompt
+		existing.systemPromptAppend === normalizedSystemPrompt &&
+		hasPrefix(existing.contextMessageSignatures, params.contextMessageSignatures)
 	) {
 		if (params.modelId && existing.modelId !== params.modelId) {
-			await (existing.connection as any).unstable_setSessionModel?.({
-				sessionId: existing.acpSessionId,
-				modelId: params.modelId,
-			});
-			existing.modelId = params.modelId;
+			const setModel = (existing.connection as any).unstable_setSessionModel;
+			if (typeof setModel === "function") {
+				await setModel.call(existing.connection, {
+					sessionId: existing.acpSessionId,
+					modelId: params.modelId,
+				});
+				existing.modelId = params.modelId;
+			} else {
+				await closeBridgeSession(params.sessionKey);
+				return await startBridgeSession({
+					...params,
+					systemPromptAppend: normalizedSystemPrompt,
+				});
+			}
 		}
+		existing.contextMessageSignatures = [...params.contextMessageSignatures];
 		return existing;
 	}
 
@@ -374,11 +439,7 @@ export async function closeBridgeSession(sessionKey: string): Promise<void> {
 	} catch {
 		// ignore
 	}
-	try {
-		session.child.kill();
-	} catch {
-		// ignore
-	}
+	killProcessTree(session.child);
 }
 
 export function getBridgeErrorDetails(error: unknown, session?: AcpBridgeSession): string {
