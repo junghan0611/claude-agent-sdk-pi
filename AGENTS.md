@@ -1,15 +1,16 @@
 # AGENTS.md
 
-> **⚠️ ARCHIVED** — This repository is archived as of 2026-04-10.
-> See README.md for full rationale.
+> **🔄 REACTIVATED** — This repository is active again as of 2026-04-15.
+> The earlier archive conclusion was superseded after the ben path was disabled pending account-risk observation.
 
 ## Status
 
-This repository is **archived**. The ACP bridge experiment concluded successfully — the architecture worked, benchmarks passed — but the simpler **ben approach** (direct Anthropic API + `pi-claude-code-use` package) replaced it.
+This repository is **active again**. The ACP bridge experiment had previously been archived in favor of the ben approach, but `agent-config` has now switched back to `claude-agent-sdk-pi` as the default Claude path in pi.
 
-The active Claude integration now lives in:
-- `~/repos/gh/agent-config` — pi configuration with ben as default provider
-- `~/repos/3rd/pi-packages` — ben's pi-claude-code-use package
+The active integration now lives in:
+- `~/repos/gh/claude-agent-sdk-pi` — ACP bridge provider
+- `~/repos/gh/agent-config` — pi configuration loading this provider by default
+- `~/repos/3rd/pi-packages` — optional ben path, currently disabled by default
 
 ## Historical Mission
 

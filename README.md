@@ -1,14 +1,14 @@
 # claude-agent-sdk-pi
 
-> **⚠️ ARCHIVED** — This repository is archived as of 2026-04-10.
-> The experiment concluded successfully, but the **ben approach** (direct Anthropic API via [pi-claude-code-use](https://github.com/nicobailey/pi-packages)) proved simpler and more maintainable than the ACP bridge approach.
-> See [Conclusion](#conclusion) for the full rationale.
+> **🔄 REACTIVATED** — This repository is active again as of 2026-04-15.
+> It had been archived after the ben approach looked simpler, but that path is now disabled by default in `agent-config` pending account-risk observation.
+> The ACP bridge is therefore back as the active Claude path in pi.
 
 ![Demo](screenshot.png)
 
 ## Status
 
-**Phase:** Archived. Experiment complete.
+**Phase:** Active again. ACP bridge is back in service.
 
 **What was built:**
 
@@ -23,7 +23,7 @@ pi
         -> CLI / PATH tools
 ```
 
-**What replaced it:**
+**Alternative path (currently disabled by default):**
 
 ```text
 pi
